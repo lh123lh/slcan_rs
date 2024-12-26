@@ -1,20 +1,11 @@
-fn main() {
-    let arg = std::env::args().nth(1);
-    let port = match arg {
-        Some(filename) => {
-            println!("{}", filename);
-            serial::open(&filename)
-        }
-        None => {
-            eprintln!("usage: macos_example <TTY path>");
-            std::process::exit(1);
-        }
-    }
-    .unwrap();
-    let mut can = slcan::CanSocket::<serial::SystemPort>::new(port);
 
-    can.close().unwrap();
-    can.open(slcan::BitRate::Setup1Mbit).unwrap();
+use slcan::SocketCan;
+
+fn main() {
+    let mut can = slcan::CanSocket::new("COM7".to_string(), slcan::BitRate::Setup500Kbit);
+
+    // can.close().unwrap();
+    can.open().unwrap();
 
     loop {
         match can.read() {

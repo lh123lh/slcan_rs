@@ -1,20 +1,10 @@
 [package]
-authors = ["Judge Maygarden <jmaygarden@gmail.com>"]
-description = "Serial line CAN bus (slcan) interface"
-documentation = "https://docs.rs/slcan"
-edition = "2018"
-homepage = "https://github.com/jmaygarden/slcan"
-keywords = ["can", "slcan"]
-license = "MIT"
 name = "slcan"
-readme = "README.md"
-repository = "https://github.com/jmaygarden/slcan.git"
-version = "0.1.4"
+version = "0.1.0"
+edition = "2021"
 
 [dependencies]
-embedded-can = "0.3"
+embedded-can = "0.4.1"
 nb = "1.0"
-serial-core = "0.4"
-
-[dev-dependencies]
-serial = "0.4"
+serde = { version = "1.0.216", features = ["derive"] }
+serialport = "4.6.1"

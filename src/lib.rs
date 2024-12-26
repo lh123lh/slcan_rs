@@ -1,15 +1,10 @@
-extern crate serial_core as serial;
-
 pub use embedded_can::{ExtendedId, Id, StandardId};
-use serial::prelude::*;
+use serde::{Deserialize, Serialize};
+use serialport::{self, SerialPort};
 use std::{
     convert::{TryFrom, TryInto},
     io,
 };
-#[cfg(target_family = "unix")]
-use std::os::unix::prelude::AsRawFd;
-
-pub mod embedded_can_impl;
 
 // maximum rx buffer len: extended CAN frame with timestamp
 const SLCAN_MTU: usize = "T1111222281122334455667788EA5F\r".len() + 1;
@@ -23,6 +18,7 @@ const CARRIAGE_RETURN: u8 = '\r' as u8;
 const HEX_LUT: &[u8] = "0123456789ABCDEF".as_bytes();
 
 #[repr(u8)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum BitRate {
     Setup10Kbit = '0' as u8,
     Setup20Kbit = '1' as u8,
@@ -73,21 +69,21 @@ pub struct CanFrame {
     pub data: [u8; 8],
 }
 
-pub struct CanSocket<P: SerialPort> {
-    port: P,
+pub trait SocketCan: Send {
+    fn open(&mut self) -> io::Result<()>;
+    fn close(&mut self) -> io::Result<()>;
+    fn write(&mut self, id: Id, data: &[u8]) -> io::Result<usize>;
+    fn read(&mut self) -> io::Result<CanFrame>;
+}
+
+pub struct CanSocket {
+    // port: P,
+    candev: Option<Box<dyn SerialPort>>,
+    port: String,
+    bitrate: BitRate,
     rbuff: [u8; SLCAN_MTU],
     rcount: usize,
     error: bool,
-}
-
-#[cfg(target_family = "unix")]
-impl<P> AsRawFd for CanSocket<P>
-where
-    P: SerialPort + AsRawFd,
-{
-    fn as_raw_fd(&self) -> std::os::unix::prelude::RawFd {
-        self.port.as_raw_fd()
-    }
 }
 
 fn hextou8(s: u8) -> Result<u8, ()> {
@@ -212,31 +208,33 @@ impl std::fmt::Display for CanFrame {
     }
 }
 
-impl<P: SerialPort> CanSocket<P> {
-    pub fn new(port: P) -> Self {
-        CanSocket {
-            port,
-            rbuff: [0; SLCAN_MTU],
-            rcount: 0,
-            error: false,
-        }
-    }
+impl SocketCan for CanSocket {
+    fn open(&mut self) -> io::Result<()> {
+        self.candev = Some(serialport::new(&self.port, 460800).open().unwrap());
 
-    pub fn open(&mut self, bitrate: BitRate) -> io::Result<()> {
-        self.port
-            .write(&[Command::Setup as u8, bitrate as u8, '\r' as u8])?;
-        self.port.write(&[Command::Open as u8, '\r' as u8])?;
-
-        Ok(())
-    }
-
-    pub fn close(&mut self) -> io::Result<()> {
-        self.port.write(&[Command::Close as u8, '\r' as u8])?;
+        self.candev.as_mut().unwrap().write(&[
+            Command::Setup as u8,
+            self.bitrate.clone() as u8,
+            '\r' as u8,
+        ])?;
+        self.candev
+            .as_mut()
+            .unwrap()
+            .write(&[Command::Open as u8, '\r' as u8])?;
 
         Ok(())
     }
 
-    pub fn write(&mut self, id: Id, data: &[u8]) -> io::Result<usize> {
+    fn close(&mut self) -> io::Result<()> {
+        self.candev
+            .as_mut()
+            .unwrap()
+            .write(&[Command::Close as u8, '\r' as u8])?;
+
+        Ok(())
+    }
+
+    fn write(&mut self, id: Id, data: &[u8]) -> io::Result<usize> {
         let dlc = data.len();
 
         if dlc > 8 {
@@ -260,12 +258,12 @@ impl<P: SerialPort> CanSocket<P> {
         buf.extend_from_slice(&bytestohex(data));
         buf.push('\r' as u8);
 
-        self.port.write(buf.as_slice())
+        self.candev.as_mut().unwrap().write(buf.as_slice())
     }
 
-    pub fn read(&mut self) -> io::Result<CanFrame> {
+    fn read(&mut self) -> io::Result<CanFrame> {
         let mut buf = [0u8; 1];
-        let mut len = self.port.read(&mut buf)?;
+        let mut len = self.candev.as_mut().unwrap().read(&mut buf)?;
 
         while len == 1usize {
             let s = buf[0];
@@ -288,10 +286,23 @@ impl<P: SerialPort> CanSocket<P> {
                 }
             }
 
-            len = self.port.read(&mut buf)?;
+            len = self.candev.as_mut().unwrap().read(&mut buf)?;
         }
 
         Err(io::Error::new(io::ErrorKind::WouldBlock, ""))
+    }
+}
+
+impl CanSocket {
+    pub fn new(port: String, bitrate: BitRate) -> Self {
+        CanSocket {
+            candev: None,
+            port: port,
+            bitrate: bitrate,
+            rbuff: [0; SLCAN_MTU],
+            rcount: 0,
+            error: false,
+        }
     }
 
     fn bump(&mut self) -> io::Result<CanFrame> {
